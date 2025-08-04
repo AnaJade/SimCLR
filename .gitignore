@@ -1,0 +1,6 @@
+.idea
+__pycache__/*
+runs/*
+data_aug/__pycache__/*
+exceptions/__pycache__/*
+models/__pycache__/*

@@ -4,10 +4,10 @@ import sys
 
 import torch
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from utils import save_config_file, accuracy, save_checkpoint
+from utils_SimCLR import save_config_file, accuracy, save_checkpoint
 
 torch.manual_seed(0)
 
@@ -56,8 +56,8 @@ class SimCLR(object):
 
     def train(self, train_loader):
 
-        scaler = GradScaler(enabled=self.args.fp16_precision)
-
+        # scaler = GradScaler(enabled=self.args.fp16_precision)
+        scaler = GradScaler(self.args.device, enabled=self.args.fp16_precision)
         # save config file
         save_config_file(self.writer.log_dir, self.args)
 
@@ -65,13 +65,14 @@ class SimCLR(object):
         logging.info(f"Start SimCLR training for {self.args.epochs} epochs.")
         logging.info(f"Training with gpu: {self.args.disable_cuda}.")
 
+        best_loss = 1e6
         for epoch_counter in range(self.args.epochs):
             for images, _ in tqdm(train_loader):
                 images = torch.cat(images, dim=0)
 
                 images = images.to(self.args.device)
 
-                with autocast(enabled=self.args.fp16_precision):
+                with autocast(device_type=str(self.args.device), enabled=self.args.fp16_precision):
                     features = self.model(images)
                     logits, labels = self.info_nce_loss(features)
                     loss = self.criterion(logits, labels)
