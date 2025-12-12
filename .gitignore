@@ -4,3 +4,5 @@ runs/*
 data_aug/__pycache__/*
 exceptions/__pycache__/*
 models/__pycache__/*
+weights*
+wandb

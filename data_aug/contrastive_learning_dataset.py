@@ -30,6 +30,24 @@ class ContrastiveLearningDataset:
         return data_transforms
 
     def get_dataset(self, name, n_views, oct_args=None):
+        # Add support for OCT dataset
+        if oct_args is not None:
+            if oct_args['use_simclr_augmentations']:
+                data_transforms = ContrastiveLearningViewGenerator(
+                    self.get_simclr_pipeline_transform(oct_args['img_size']),
+                    n_views).base_transform.transforms
+
+                # Append data_transforms to base transforms
+                img_transforms = oct_args['transforms_list']
+                if oct_args['img_channel'] == 1:
+                    img_transforms = img_transforms[:-1]  # Remove Grayscale transform, will be re-added later
+                data_transforms = img_transforms + data_transforms[:-1]  # Removing second ToTensor
+                if oct_args['img_channel'] == 1:
+                    data_transforms.append(transforms.Grayscale())  # Re-add Grayscale transform at the end
+                oct_args['transforms_list'] = data_transforms
+
+            # Convert to Compose
+            oct_args['transforms'] = transforms.Compose(oct_args['transforms_list'])
         valid_datasets = {'cifar10': lambda: datasets.CIFAR10(self.root_folder, train=True,
                                                               transform=ContrastiveLearningViewGenerator(
                                                                   self.get_simclr_pipeline_transform(32),
@@ -42,10 +60,15 @@ class ContrastiveLearningDataset:
                                                               n_views),
                                                           download=True),
                           'oct': lambda: OCTDataset(self.root_folder, 'train',
-                                                    oct_args['map_df'], oct_args['labels_dict'],
-                                                    transforms=ContrastiveLearningViewGenerator(self.get_simclr_pipeline_transform(oct_args['size']), n_views))
+                                                    oct_args['map_df_paths'], oct_args['labels_dict'],
+                                                    ch_in=oct_args['img_channel'],
+                                                    sample_within_image=oct_args['sample_within_image'],
+                                                    use_iipp=oct_args['use_iipp'],
+                                                    num_same_area=oct_args['num_same_area'],
+                                                    transforms=ContrastiveLearningViewGenerator(
+                                                        oct_args['transforms'], n_views),
+                                                    pre_sample=oct_args['dataset_sample']),
                           }
-
         try:
             dataset_fn = valid_datasets[name]
         except KeyError:

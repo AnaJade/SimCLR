@@ -1,20 +1,26 @@
 import argparse
 import pathlib
+import pynvml
+import random
 import sys
 from sys import platform
 import torch
 import torch.backends.cudnn as cudnn
+from torch import nn
+from addict import Dict
 from torchvision import models
+import torchvision.transforms as transforms
 
+from SPICE.configs.stl10.eval import batch_size
 from data_aug.contrastive_learning_dataset import ContrastiveLearningDataset
-from models.resnet_simclr import ResNetSimCLR
+from models.resnet_simclr import ResNetSimCLR, FeatureModelSimCLR
 from simclr import SimCLR
 
 # Import utils
 parent_dir = pathlib.Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 import utils
-from utils_data import OCTDataset
+from utils_data import OCTDataset, build_image_root
 
 # Img size and moco_dim (nb of classes) values based on the dataset
 img_size_dict = {'stl10': 96,
@@ -30,61 +36,18 @@ mean['cifar100'] = [x / 255 for x in [129.3, 124.1, 112.4]]
 mean['stl10'] = [0.485, 0.456, 0.406]
 mean['npy'] = [0.485, 0.456, 0.406]
 mean['npy224'] = [0.485, 0.456, 0.406]
-mean['oct'] = [149.888, 149.888, 149.888]
+# mean['oct'] = [149.888, 149.888, 149.888]
 
 std['cifar10'] = [x / 255 for x in [63.0, 62.1, 66.7]]
 std['cifar100'] = [x / 255 for x in [68.2,  65.4,  70.4]]
 std['stl10'] = [0.229, 0.224, 0.225]
 std['npy'] = [0.229, 0.224, 0.225]
 std['npy224'] = [0.229, 0.224, 0.225]
-std['oct'] = [11.766, 11.766, 11.766]
+# std['oct'] = [11.766, 11.766, 11.766]
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
-
-"""
-parser = argparse.ArgumentParser(description='PyTorch SimCLR')
-parser.add_argument('-data', metavar='DIR', default='./datasets',
-                    help='path to dataset')
-parser.add_argument('-dataset-name', default='stl10',
-                    help='dataset name', choices=['stl10', 'cifar10'])
-parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
-                    choices=model_names,
-                    help='model architecture: ' +
-                         ' | '.join(model_names) +
-                         ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=12, type=int, metavar='N',
-                    help='number of data loading workers (default: 32)')
-parser.add_argument('--epochs', default=200, type=int, metavar='N',
-                    help='number of total epochs to run')
-parser.add_argument('-b', '--batch-size', default=256, type=int,
-                    metavar='N',
-                    help='mini-batch size (default: 256), this is the total '
-                         'batch size of all GPUs on the current node when '
-                         'using Data Parallel or Distributed Data Parallel')
-parser.add_argument('--lr', '--learning-rate', default=0.0003, type=float,
-                    metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
-                    metavar='W', help='weight decay (default: 1e-4)',
-                    dest='weight_decay')
-parser.add_argument('--seed', default=None, type=int,
-                    help='seed for initializing training. ')
-parser.add_argument('--disable-cuda', action='store_true',
-                    help='Disable CUDA')
-parser.add_argument('--fp16-precision', action='store_true',
-                    help='Whether or not to use 16-bit precision GPU training.')
-
-parser.add_argument('--out_dim', default=128, type=int,
-                    help='feature dimension (default: 128)')
-parser.add_argument('--log-every-n-steps', default=100, type=int,
-                    help='Log every n steps')
-parser.add_argument('--temperature', default=0.07, type=float,
-                    help='softmax temperature (default: 0.07)')
-parser.add_argument('--n-views', default=2, type=int, metavar='N',
-                    help='Number of views for contrastive learning training.')
-parser.add_argument('--gpu-index', default=0, type=int, help='Gpu index.')
-"""
 
 # Set up the argument parser
 parser = argparse.ArgumentParser()
@@ -104,50 +67,55 @@ def main():
 
     configs = utils.load_configs(config_file)
     if platform == "linux" or platform == "linux2":
-        dataset_root = pathlib.Path(configs['data']['dataset_root_linux'])
         dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_linux'])
     elif platform == "win32":
-        dataset_root = pathlib.Path(configs['data']['dataset_root_windows'])
         dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_windows'])
     labels = configs['data']['labels']
     ascan_per_group = configs['data']['ascan_per_group']
+    pre_processing = Dict(configs['data']['pre_processing'])
     use_mini_dataset = configs['data']['use_mini_dataset']
-    # oct_img_root = pathlib.Path(f'OCT_lab_data/{ascan_per_group}mscans')
+    mean['oct'] = 3 * [configs['data']['img_mean'] / 255]
+    std['oct'] = 3 * [configs['data']['img_std'] / 255]
     img_size_dict['oct'] = (512, ascan_per_group)
     num_cluster_dict['oct'] = len(labels)
 
     ### Convert config file values to the args variable equivalent (match the format of the existing code)
     print("Assigning config values to corresponding args variables...")
     # Dataset
+    args.dataset_name = configs['SimCLR']['dataset_name']
+    dataset_root = pathlib.Path(dataset_path).joinpath(
+        'OCT_lab_data' if args.dataset_name == 'oct' else args.dataset_name)
+    print(f"dataset_root: {dataset_root}")
+    image_root = build_image_root(ascan_per_group, pre_processing)
     args.labels_dict = {i: lbl for i, lbl in enumerate(labels)}
     args.map_df_paths = {
-        split: dataset_root.joinpath(f"{ascan_per_group}mscans").joinpath(
+        split: dataset_root.joinpath(image_root).joinpath(
             f"{split}{'Mini' if use_mini_dataset else ''}_mapping_{ascan_per_group}scans.csv")
         for split in ['train', 'valid', 'test']}
-
-    args.dataset_name = configs['SimCLR']['dataset_name']
-    args.data = pathlib.Path(dataset_path).joinpath('OCT_lab_data' if args.dataset_name == 'oct' else args.dataset_name)
-    print(f"args.data: {args.data}")
-
-    # args.all = configs['SPICE']['MoCo']['use_all']
-    args.img_size = img_size_dict[args.dataset_name]
+    args.img_channel = configs['SimCLR']['img_channel']
+    if args.dataset_name != 'oct':
+        args.img_channel = 3
+    args.sample_within_image = configs['SimCLR']['sample_within_image']
+    args.img_reshape = configs['SimCLR']['img_reshape']
+    if args.img_reshape is not None:
+        args.img_size = args.img_reshape
+    else:
+        args.img_size = 512 # img_size_dict[args.dataset_name]
+    args.use_iipp = configs['SimCLR']['use_iipp']
+    args.num_same_area = configs['SimCLR']['num_same_area']
+    args.use_simclr_augmentations = configs['SimCLR']['use_simclr_augmentations']
+    args.ascan_per_group = ascan_per_group
 
     # Training params
     args.seed = configs['training']['random_seed']
-    # args.save_folder = pathlib.Path(configs['SPICE']['MoCo']['save_folder']).joinpath(args.dataset_name).joinpath('moco')
-    # args.save_freq = configs['SPICE']['MoCo']['save_freq']
+    args.dataset_sample = configs['SimCLR']['dataset_sample']
     args.arch = configs['SimCLR']['arch']
+    args.use_pretrained = configs['SimCLR']['use_pretrained']
     args.workers = configs['SimCLR']['num_workers']
     args.epochs = configs['SimCLR']['max_epochs']
-    # args.start_epoch = configs['SPICE']['MoCo']['start_epoch']
     args.batch_size = configs['SimCLR']['batch_size']
     args.lr = configs['SimCLR']['lr']
-    # args.schedule = configs['SPICE']['MoCo']['lr_schedule']
-    # args.momentum = configs['SPICE']['MoCo']['momentum']
     args.weight_decay = configs['SimCLR']['weight_decay']
-    # args.print_freq = configs['SPICE']['MoCo']['print_freq']
-    # args.resume = pathlib.Path(args.save_folder).joinpath('checkpoint_last.pth.tar') if configs['SPICE']['MoCo'][
-    #     'resume'] else False
     args.disable_cuda = configs['SimCLR']['disable_cuda']
     args.fp16_precision = configs['SimCLR']['fp16_precision']
     args.out_dim = num_cluster_dict[args.dataset_name]
@@ -155,42 +123,102 @@ def main():
     args.temperature = configs['SimCLR']['temperature']
     args.n_views = 2
     args.gpu_index = configs['SimCLR']['gpu_index']
+    args.patience = configs['SimCLR']['patience']
+    save_folder = pathlib.Path().resolve().joinpath(f'weights_{args.arch}')
+    if not save_folder.is_dir():
+        save_folder.mkdir(parents=True)
+
+    args.wandb = Dict()
+    args.wandb.wandb_log = configs['wandb']['wandb_log']
+    args.wandb.project_name = configs['wandb']['project_name']
+    if args.wandb.project_name != 'Test-project':
+        args.wandb.project_name = 'SimCLR'
 
     ###############################################
     assert args.n_views == 2, "Only two view training is supported. Please use --n-views 2."
+    # Set all random seeds
+    print("Setting random seed...")
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
     # check if gpu training is available
     if not args.disable_cuda and torch.cuda.is_available():
-        args.device = torch.device('cuda')
+        # print('__CUDNN VERSION:', torch.backends.cudnn.version())
+        # print('__Number CUDA Devices:', torch.cuda.device_count())
+        args.device = torch.device(f'cuda:{args.gpu_index}')
         cudnn.deterministic = True
         cudnn.benchmark = True
+        print('Selected GPU index:', args.gpu_index)
+        print('__CUDA Device Name:', torch.cuda.get_device_name(args.gpu_index))
+        print('__CUDA Device Total Memory [GB]:', torch.cuda.get_device_properties(args.gpu_index).total_memory / 1e9)
+        print('Clearing cache...')
+        torch.cuda.empty_cache()
+        print('__CUDA Device Reserved Memory [GB]:', torch.cuda.memory_reserved(args.gpu_index) / 1e9)
+        print('__CUDA Device Allocated Memory [GB]:', torch.cuda.memory_allocated(args.gpu_index) / 1e9)
+        print('Stats with pynvml:')
+        pynvml.nvmlInit()
+        h = pynvml.nvmlDeviceGetHandleByIndex(args.gpu_index)
+        info = pynvml.nvmlDeviceGetMemoryInfo(h)
+        print(f'total    : {info.total}')
+        print(f'free     : {info.free}')
+        print(f'used     : {info.used}')
+        pynvml.nvmlShutdown()
     else:
         args.device = torch.device('cpu')
         args.gpu_index = -1
 
     if args.dataset_name == 'oct':
-        oct_args = {'map_df': args.map_df_paths,
+        img_transforms = [transforms.ToTensor(),  # scales pixel values to [0, 1]
+                          transforms.Resize((args.img_reshape, args.img_reshape)),
+                          transforms.Normalize(mean=mean[args.dataset_name],
+                                               std=std[args.dataset_name])]
+        if args.img_channel == 1:
+            img_transforms.append(transforms.Grayscale())
+        if not args.use_simclr_augmentations:
+            aug = [transforms.RandomApply([transforms.RandomVerticalFlip()], p=0.3),  # Used to counter flipped scans
+                   transforms.RandomApply([transforms.ColorJitter(brightness=0.2, contrast=0.2)], p=0.8),
+                   transforms.RandomApply([transforms.RandomRotation(degrees=8),
+                                           # transforms.CenterCrop(size=(188, 236)), # Used in the paper, but not really applicable here
+                                           transforms.RandomHorizontalFlip()], p=0.5),
+                   ]
+            img_transforms = img_transforms + aug
+        oct_args = {'map_df_paths': args.map_df_paths,
                     'labels_dict': args.labels_dict,
-                    'size': args.img_size}
-        dataset = ContrastiveLearningDataset(args.data)
+                    'img_size': args.img_size,
+                    'img_channel': args.img_channel,
+                    'sample_within_image': args.sample_within_image,
+                    'use_iipp': args.use_iipp,
+                    'num_same_area': args.num_same_area,
+                    'use_simclr_augmentations': args.use_simclr_augmentations,
+                    'transforms_list': img_transforms,
+                    'dataset_sample': args.dataset_sample}
+        dataset = ContrastiveLearningDataset(dataset_root)
         train_dataset = dataset.get_dataset(args.dataset_name, args.n_views, oct_args)
     else:
-        dataset = ContrastiveLearningDataset(args.data)
+        dataset = ContrastiveLearningDataset(dataset_root)
         train_dataset = dataset.get_dataset(args.dataset_name, args.n_views)
 
+    if args.use_iipp:
+        batch_size = int(round(args.batch_size / args.num_same_area))
+    else:
+        batch_size = args.batch_size
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True,
+        train_dataset, batch_size=batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True, drop_last=True)
 
-    model = ResNetSimCLR(base_model=args.arch, out_dim=args.out_dim)
+    feature_model = FeatureModelSimCLR(arch=args.arch,
+                                       out_dim=args.out_dim,
+                                       pretrained=args.use_pretrained,
+                                       img_channel=args.img_channel)
 
-    optimizer = torch.optim.Adam(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adam(feature_model.parameters(), args.lr, weight_decay=args.weight_decay)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader), eta_min=0,
                                                            last_epoch=-1)
 
     #  It’s a no-op if the 'gpu_index' argument is a negative integer or None.
     with torch.cuda.device(args.gpu_index):
-        simclr = SimCLR(model=model, optimizer=optimizer, scheduler=scheduler, args=args)
+        simclr = SimCLR(model=feature_model, optimizer=optimizer, scheduler=scheduler, args=args)
         simclr.train(train_loader)
 
 
