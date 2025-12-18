@@ -11,9 +11,8 @@ from addict import Dict
 from torchvision import models
 import torchvision.transforms as transforms
 
-from SPICE.configs.stl10.eval import batch_size
 from data_aug.contrastive_learning_dataset import ContrastiveLearningDataset
-from models.resnet_simclr import ResNetSimCLR, FeatureModelSimCLR
+from models.resnet_simclr import FeatureModelSimCLR
 from simclr import SimCLR
 
 # Import utils

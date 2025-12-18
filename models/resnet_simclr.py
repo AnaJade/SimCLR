@@ -13,33 +13,6 @@ sys.path.append(str(parent_dir))
 import utils
 
 
-class ResNetSimCLR(nn.Module):
-
-    def __init__(self, base_model, out_dim, pretrained):
-        super(ResNetSimCLR, self).__init__()
-        weights = 'DEFAULT' if pretrained else None
-        self.resnet_dict = {"resnet18": models.resnet18(weights=weights),
-                            "resnet50": models.resnet50(weights=weights)}
-
-        self.backbone = self._get_basemodel(base_model)
-        dim_mlp = self.backbone.fc.in_features
-
-        # add mlp projection head
-        self.backbone.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), nn.Linear(dim_mlp, out_dim))
-
-    def _get_basemodel(self, model_name):
-        try:
-            model = self.resnet_dict[model_name]
-        except KeyError:
-            raise InvalidBackboneError(
-                "Invalid backbone architecture. Check the config file and pass one of: resnet18 or resnet50")
-        else:
-            return model
-
-    def forward(self, x):
-        return self.backbone(x)
-
-
 class FeatureModelSimCLR(nn.Module):
     def __init__(self, arch, out_dim, pretrained, img_channel):
         super().__init__()

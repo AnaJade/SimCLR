@@ -12,7 +12,6 @@ from torch.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from SPICE.configs.stl10.eval import batch_size
 from utils_SimCLR import save_config_file, accuracy, save_checkpoint
 
 # Import utils

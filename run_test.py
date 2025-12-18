@@ -8,6 +8,8 @@ from addict import Dict
 from torchvision import models
 
 import numpy as np
+import pandas as pd
+from tqdm import tqdm
 import os
 from sklearn.neighbors import KNeighborsClassifier
 import yaml
@@ -22,15 +24,13 @@ from torchvision import datasets
 import torch.nn as nn
 from sklearn.metrics import precision_score, recall_score, adjusted_rand_score, normalized_mutual_info_score
 
-from data_aug.contrastive_learning_dataset import ContrastiveLearningDataset
-from models.resnet_simclr import ResNetSimCLR
-from simclr import SimCLR
+from models.resnet_simclr import FeatureModelSimCLR
 
 # Import utils
 parent_dir = pathlib.Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 import utils
-from utils_data import OCTDataset
+from utils_data import OCTDataset, build_image_root
 
 # Img size and moco_dim (nb of classes) values based on the dataset
 img_size_dict = {'stl10': 96,
@@ -46,16 +46,14 @@ mean['cifar100'] = [x / 255 for x in [129.3, 124.1, 112.4]]
 mean['stl10'] = [0.485, 0.456, 0.406]
 mean['npy'] = [0.485, 0.456, 0.406]
 mean['npy224'] = [0.485, 0.456, 0.406]
-mean['oct'] = [x /255 for x in [42.573, 42.573, 42.573]]
-mean['oct'] = [x /255 for x in [42.573]]
+# mean['oct'] = [149.888, 149.888, 149.888]
 
 std['cifar10'] = [x / 255 for x in [63.0, 62.1, 66.7]]
 std['cifar100'] = [x / 255 for x in [68.2,  65.4,  70.4]]
 std['stl10'] = [0.229, 0.224, 0.225]
 std['npy'] = [0.229, 0.224, 0.225]
 std['npy224'] = [0.229, 0.224, 0.225]
-std['oct'] = [x /255 for x in [26.688, 26.688, 26.688]]
-std['oct'] = [x /255 for x in [26.688]]
+# std['oct'] = [11.766, 11.766, 11.766]
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -68,15 +66,17 @@ parser.add_argument('--config_path',
                     type=str)
 
 
-class ResNetFeatureExtractor(object):
+class FeatureExtractor(object):
     def __init__(self, args, ckp_file):
         self.ckp_file = ckp_file
         self.args = args
-        self.model = ResNetSimCLR(base_model=args.arch, out_dim=args.out_dim)
+        self.model = FeatureModelSimCLR(arch=args.arch, out_dim=args.out_dim,
+                                        pretrained=False, img_channel=args.img_channel)
 
         # Load weights
         state_dict = torch.load(self.ckp_file, map_location=self.args.device)
-        state_dict = state_dict['state_dict']
+        if 'state_dict' in state_dict.keys():
+            state_dict = state_dict['state_dict']
         self.model.load_state_dict(state_dict, strict=False)
         self.model.to(args.device)
 
@@ -154,6 +154,8 @@ class LogiticRegressionEvaluator(object):
                 y_true_epoch.append(batch_y)
 
             final_acc = 100 * correct / total
+            logits_epoch = torch.concat(logits_epoch)
+            y_true_epoch = torch.concat(y_true_epoch)
             self.log_regression.train()
             return final_acc, logits_epoch, y_true_epoch
 
@@ -177,46 +179,54 @@ class LogiticRegressionEvaluator(object):
         optimizer = torch.optim.Adam(self.log_regression.parameters(), 3e-4, weight_decay=weight_decay)
         criterion = torch.nn.CrossEntropyLoss()
 
-        best_accuracy = 0
-
-        for e in range(200):
-
+        best_nmi = 0
+        best_epoch_acc = 0
+        best_epoch_precision = 0
+        best_epoch_recall = 0
+        best_epoch_ari = 0
+        best_epoch = 0
+        print("Training regression model...")
+        for e in tqdm(range(200)):
             for batch_x, batch_y in train_loader:
                 batch_x, batch_y = batch_x.to(self.args.device), batch_y.to(self.args.device)
-
                 optimizer.zero_grad()
-
                 logits = self.log_regression(batch_x)
-
                 loss = criterion(logits, batch_y)
-
                 loss.backward()
                 optimizer.step()
 
-            epoch_acc, logits_epoch, y_true_epoch = self.eval(test_loader)
+            acc, logits_epoch, y_true_epoch = self.eval(test_loader)
 
+            # Get other metrics
+            preds_epoch = logits_epoch.argmax(1)
+            eval_df_epoch = pd.DataFrame(torch.vstack((y_true_epoch.cpu(), preds_epoch.cpu())).T, columns=['label', 'pred'])
             # Calculate other metrics
             # Precision and recall
             # https://medium.com/data-science-in-your-pocket/calculating-precision-recall-for-multi-class-classification-9055931ee229
-            # Precision (tp/(tp+fp)) and recall (tp/(tp+fn)), macro
-            pr_macro = precision_score(preds['label'], preds['pred'], average='macro')
-            re_macro = recall_score(preds['label'], preds['pred'], average='macro')
-            # Precision (tp/(tp+fp)) and recall (tp/(tp+fn)), micro
-            pr_micro = precision_score(preds['label'], preds['pred'], average='micro')
-            re_micro = recall_score(preds['label'], preds['pred'], average='micro')
+            # Precision (tp/(tp+fp)) and recall (tp/(tp+fn)), macro gives better results as micro
+            precision = precision_score(eval_df_epoch['label'], eval_df_epoch['pred'], average='macro', zero_division=0)
+            recall = recall_score(eval_df_epoch['label'], eval_df_epoch['pred'], average='macro')
             # Adjusted rand index (ARI)
-            ari = adjusted_rand_score(preds['label'], preds['pred'])
+            ari = adjusted_rand_score(eval_df_epoch['label'], eval_df_epoch['pred'])
             # Normalized mutual information (NMI)
-            nmi = normalized_mutual_info_score(preds['label'], preds['pred'])
-
-            if epoch_acc > best_accuracy:
+            nmi = normalized_mutual_info_score(eval_df_epoch['label'], eval_df_epoch['pred'])
+            if nmi > best_nmi:
                 # print("Saving new model with accuracy {}".format(epoch_acc))
-                best_accuracy = epoch_acc
+                best_nmi = nmi
+                best_epoch = e
+                best_epoch_acc = acc
+                best_epoch_precision = precision
+                best_epoch_recall = recall
+                best_epoch_ari = ari
                 torch.save(self.log_regression.state_dict(), 'log_regression.pth')
 
         print("--------------")
         print("Done training")
-        print("Best accuracy:", best_accuracy)
+        print(f"Best nmi @ epoch {best_epoch}: {best_nmi}")
+        print(f"Accuracy @ epoch {best_epoch}: {best_epoch_acc}")
+        print(f"Precision @ epoch {best_epoch}: {best_epoch_precision}")
+        print(f"Recall @ epoch {best_epoch}: {best_epoch_recall}")
+        print(f"ARI @ epoch {best_epoch}: {best_epoch_ari}")
 
 def get_stl10_data_loaders(root_path, batch_size=128, shuffle=False, download=False):
     train_dataset = datasets.STL10(root_path, split='train', download=download,
@@ -234,17 +244,27 @@ def get_stl10_data_loaders(root_path, batch_size=128, shuffle=False, download=Fa
 
 
 def get_oct_data_loaders(root_path:pathlib.Path, oct_args:dict, batch_size:int, shuffle=False):
+    if 'transforms_list' in oct_args.keys():
+        oct_args['transforms'] = transforms.Compose(oct_args['transforms_list'])
     train_dataset = OCTDataset(root_path, 'train',
-                               oct_args['map_df'], oct_args['labels_dict'],
-                               transforms=transforms.ToTensor(),
-                               pre_sample=oct_args['pre_sample'])
+                               oct_args['map_df_paths'], oct_args['labels_dict'],
+                               ch_in=oct_args['img_channel'],
+                               sample_within_image=oct_args['sample_within_image'],
+                               use_iipp=False,
+                               num_same_area=-1,
+                               transforms=oct_args['transforms'],
+                               pre_sample=oct_args['dataset_sample'])
     train_loader = DataLoader(train_dataset, batch_size=batch_size,
                               num_workers=0, drop_last=False, shuffle=shuffle)
 
     test_dataset = OCTDataset(root_path, 'test',
-                               oct_args['map_df'], oct_args['labels_dict'],
-                               transforms=transforms.ToTensor(),
-                               pre_sample=oct_args['pre_sample'])
+                              oct_args['map_df_paths'], oct_args['labels_dict'],
+                              ch_in=oct_args['img_channel'],
+                              sample_within_image=oct_args['sample_within_image'],
+                              use_iipp=False,
+                              num_same_area=-1,
+                              transforms=oct_args['transforms'],
+                              pre_sample=oct_args['dataset_sample'])
 
     test_loader = DataLoader(test_dataset, batch_size=batch_size,
                              num_workers=0, drop_last=False, shuffle=shuffle)
@@ -256,6 +276,7 @@ def main():
     if args.config_path is None:
         args.config_path = pathlib.Path('../config.yaml')
     config_file = pathlib.Path(args.config_path)
+    chkpt_file = pathlib.Path('runs/Dec18_10-16-32_Ilmare/checkpoint_best_0023.pt')
 
     if not config_file.exists():
         print(f'Config file not found at {args.config_path}')
@@ -263,39 +284,51 @@ def main():
 
     configs = utils.load_configs(config_file)
     if platform == "linux" or platform == "linux2":
-        dataset_root = pathlib.Path(configs['data']['dataset_root_linux'])
         dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_linux'])
     elif platform == "win32":
-        dataset_root = pathlib.Path(configs['data']['dataset_root_windows'])
         dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_windows'])
-    chkpt_file = pathlib.Path('runs/Sep18_19-15-48_ilmare/checkpoint_0200.pth.tar')
+
     labels = configs['data']['labels']
     ascan_per_group = configs['data']['ascan_per_group']
+    pre_processing = Dict(configs['data']['pre_processing'])
     use_mini_dataset = configs['data']['use_mini_dataset']
-    # oct_img_root = pathlib.Path(f'OCT_lab_data/{ascan_per_group}mscans')
+    mean['oct'] = 3 * [configs['data']['img_mean'] / 255]
+    std['oct'] = 3 * [configs['data']['img_std'] / 255]
     img_size_dict['oct'] = (512, ascan_per_group)
     num_cluster_dict['oct'] = len(labels)
 
     ### Convert config file values to the args variable equivalent (match the format of the existing code)
     print("Assigning config values to corresponding args variables...")
     # Dataset
+    args.dataset_name = configs['SimCLR']['dataset_name']
+    dataset_root = pathlib.Path(dataset_path).joinpath(
+        'OCT_lab_data' if args.dataset_name == 'oct' else args.dataset_name)
+    print(f"dataset_root: {dataset_root}")
+    image_root = build_image_root(ascan_per_group, pre_processing)
     args.labels_dict = {i: lbl for i, lbl in enumerate(labels)}
     args.map_df_paths = {
-        split: dataset_root.joinpath(f"{ascan_per_group}mscans").joinpath(
+        split: dataset_root.joinpath(image_root).joinpath(
             f"{split}{'Mini' if use_mini_dataset else ''}_mapping_{ascan_per_group}scans.csv")
         for split in ['train', 'valid', 'test']}
-
-    args.dataset_name = configs['SimCLR']['dataset_name']
-    args.data = pathlib.Path(dataset_path).joinpath('OCT_lab_data' if args.dataset_name == 'oct' else args.dataset_name)
-    print(f"args.data: {args.data}")
-
-    # args.all = configs['SPICE']['MoCo']['use_all']
-    args.img_size = img_size_dict[args.dataset_name]
+    args.img_channel = configs['SimCLR']['img_channel']
+    if args.dataset_name != 'oct':
+        args.img_channel = 3
+    args.sample_within_image = configs['SimCLR']['sample_within_image']
+    args.img_reshape = configs['SimCLR']['img_reshape']
+    if args.img_reshape is not None:
+        args.img_size = args.img_reshape
+    else:
+        args.img_size = 512  # img_size_dict[args.dataset_name]
+    args.use_iipp = configs['SimCLR']['use_iipp']
+    args.num_same_area = configs['SimCLR']['num_same_area']
+    args.use_simclr_augmentations = configs['SimCLR']['use_simclr_augmentations']
+    args.ascan_per_group = ascan_per_group
 
     # Training params
     args.seed = configs['training']['random_seed']
     args.dataset_sample = configs['SimCLR']['dataset_sample']
     args.arch = configs['SimCLR']['arch']
+    args.use_pretrained = configs['SimCLR']['use_pretrained']
     args.workers = configs['SimCLR']['num_workers']
     args.epochs = configs['SimCLR']['max_epochs']
     args.batch_size = configs['SimCLR']['batch_size']
@@ -309,6 +342,9 @@ def main():
     args.n_views = 2
     args.gpu_index = configs['SimCLR']['gpu_index']
     args.patience = configs['SimCLR']['patience']
+    save_folder = pathlib.Path().resolve().joinpath(f'weights_{args.arch}')
+    if not save_folder.is_dir():
+        save_folder.mkdir(parents=True)
 
     args.wandb = Dict()
     args.wandb.wandb_log = configs['wandb']['wandb_log']
@@ -327,18 +363,30 @@ def main():
 
     # Create train and test sets
     if args.dataset_name == 'oct':
-        oct_args = {'map_df': args.map_df_paths,
+        img_transforms = [transforms.ToTensor(),  # scales pixel values to [0, 1]
+                          transforms.Resize((args.img_reshape, args.img_reshape)),
+                          transforms.Normalize(mean=mean[args.dataset_name],
+                                               std=std[args.dataset_name])]
+        if args.img_channel == 1:
+            img_transforms.append(transforms.Grayscale())
+        oct_args = {'map_df_paths': args.map_df_paths,
                     'labels_dict': args.labels_dict,
-                    'size': args.img_size,
-                    'pre_sample': args.dataset_sample}
-        train_loader, test_loader = get_oct_data_loaders(args.data, oct_args, args.batch_size, shuffle=False)
+                    'img_size': args.img_size,
+                    'img_channel': args.img_channel,
+                    'sample_within_image': args.sample_within_image,
+                    'use_iipp': args.use_iipp,
+                    'num_same_area': args.num_same_area,
+                    'use_simclr_augmentations': args.use_simclr_augmentations,
+                    'transforms_list': img_transforms,
+                    'dataset_sample': args.dataset_sample}
+        train_loader, test_loader = get_oct_data_loaders(dataset_root, oct_args, args.batch_size, shuffle=False)
 
     else:
-        train_loader, test_loader = get_stl10_data_loaders(args.data, args.batch_size, shuffle=False, download=False)
+        train_loader, test_loader = get_stl10_data_loaders(dataset_root, args.batch_size, shuffle=False, download=False)
 
     # Extract features
     print(f"Extracting features on the train and test sets...")
-    resnet_feature_extractor = ResNetFeatureExtractor(args, chkpt_file)
+    resnet_feature_extractor = FeatureExtractor(args, chkpt_file)
     X_train_feature, y_train, X_test_feature, y_test = resnet_feature_extractor.get_resnet_features(train_loader, test_loader)
 
     # Train logistic regression
