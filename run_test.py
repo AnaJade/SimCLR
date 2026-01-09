@@ -24,7 +24,9 @@ from torchvision import datasets
 import torch.nn as nn
 from sklearn.metrics import precision_score, recall_score, adjusted_rand_score, normalized_mutual_info_score
 
+from data_aug.contrastive_learning_dataset import ContrastiveLearningDataset
 from models.resnet_simclr import FeatureModelSimCLR
+from simclr import SimCLR
 
 # Import utils
 parent_dir = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -46,14 +48,14 @@ mean['cifar100'] = [x / 255 for x in [129.3, 124.1, 112.4]]
 mean['stl10'] = [0.485, 0.456, 0.406]
 mean['npy'] = [0.485, 0.456, 0.406]
 mean['npy224'] = [0.485, 0.456, 0.406]
-# mean['oct'] = [149.888, 149.888, 149.888]
+mean['oct'] = [x /255 for x in [42.573, 42.573, 42.573]]
 
 std['cifar10'] = [x / 255 for x in [63.0, 62.1, 66.7]]
 std['cifar100'] = [x / 255 for x in [68.2,  65.4,  70.4]]
 std['stl10'] = [0.229, 0.224, 0.225]
 std['npy'] = [0.229, 0.224, 0.225]
 std['npy224'] = [0.229, 0.224, 0.225]
-# std['oct'] = [11.766, 11.766, 11.766]
+std['oct'] = [x /255 for x in [26.688, 26.688, 26.688]]
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -70,8 +72,8 @@ class FeatureExtractor(object):
     def __init__(self, args, ckp_file):
         self.ckp_file = ckp_file
         self.args = args
-        self.model = FeatureModelSimCLR(arch=args.arch, out_dim=args.out_dim,
-                                        pretrained=False, img_channel=args.img_channel)
+        self.model = FeatureModelSimCLR(arch=args.arch, out_dim=args.out_dim, pretrained=False, img_channel=args.img_channel)
+        # FeatureModelSimCLR(base_model=args.arch, out_dim=args.out_dim)
 
         # Load weights
         state_dict = torch.load(self.ckp_file, map_location=self.args.device)
@@ -108,6 +110,8 @@ class LogisticRegression(nn.Module):
     def __init__(self, n_features, n_classes):
         super(LogisticRegression, self).__init__()
         self.model = nn.Linear(n_features, n_classes)
+        # self.model = nn.Sequential(nn.Linear(n_features, n_classes),
+        #                            nn.Linear(n_classes, n_classes))
 
     def forward(self, x):
         return self.model(x)
@@ -149,7 +153,7 @@ class LogiticRegressionEvaluator(object):
                 total += batch_y.size(0)
                 correct += (predicted == batch_y).sum().item()
 
-                # Save values
+                # Save valuesbit
                 logits_epoch.append(logits)
                 y_true_epoch.append(batch_y)
 
@@ -243,28 +247,34 @@ def get_stl10_data_loaders(root_path, batch_size=128, shuffle=False, download=Fa
     return train_loader, test_loader
 
 
-def get_oct_data_loaders(root_path:pathlib.Path, oct_args:dict, batch_size:int, shuffle=False):
-    if 'transforms_list' in oct_args.keys():
-        oct_args['transforms'] = transforms.Compose(oct_args['transforms_list'])
+def get_oct_data_loaders(root_path:pathlib.Path, args: argparse.Namespace, batch_size:int, shuffle=False):
+    img_transforms = [transforms.ToTensor(),
+                      transforms.Resize((args.img_reshape, args.img_reshape)),
+                      transforms.Normalize(mean=mean[args.dataset_name],
+                                           std=std[args.dataset_name])]
+    if args.img_channel == 1:
+        img_transforms.append(transforms.Grayscale())
+    img_transforms = transforms.Compose(img_transforms)
     train_dataset = OCTDataset(root_path, 'train',
-                               oct_args['map_df_paths'], oct_args['labels_dict'],
-                               ch_in=oct_args['img_channel'],
-                               sample_within_image=oct_args['sample_within_image'],
-                               use_iipp=False,
+                               args.map_df_paths, args.labels_dict,
+                               ch_in=args.img_channel,
+                               sample_within_image=args.sample_within_image,
+                               use_iipp=False, # args.use_iipp,
                                num_same_area=-1,
-                               transforms=oct_args['transforms'],
-                               pre_sample=oct_args['dataset_sample'])
+                               transforms=img_transforms,
+                               pre_sample=args.dataset_sample)
+
     train_loader = DataLoader(train_dataset, batch_size=batch_size,
                               num_workers=0, drop_last=False, shuffle=shuffle)
 
     test_dataset = OCTDataset(root_path, 'test',
-                              oct_args['map_df_paths'], oct_args['labels_dict'],
-                              ch_in=oct_args['img_channel'],
-                              sample_within_image=oct_args['sample_within_image'],
+                              args.map_df_paths, args.labels_dict,
+                              ch_in=args.img_channel,
+                              sample_within_image=args.sample_within_image,
                               use_iipp=False,
                               num_same_area=-1,
-                              transforms=oct_args['transforms'],
-                              pre_sample=oct_args['dataset_sample'])
+                              transforms=img_transforms,
+                              pre_sample=args.dataset_sample)
 
     test_loader = DataLoader(test_dataset, batch_size=batch_size,
                              num_workers=0, drop_last=False, shuffle=shuffle)
@@ -276,7 +286,6 @@ def main():
     if args.config_path is None:
         args.config_path = pathlib.Path('../config.yaml')
     config_file = pathlib.Path(args.config_path)
-    chkpt_file = pathlib.Path('runs/Dec18_10-16-32_Ilmare/checkpoint_best_0023.pt')
 
     if not config_file.exists():
         print(f'Config file not found at {args.config_path}')
@@ -284,10 +293,13 @@ def main():
 
     configs = utils.load_configs(config_file)
     if platform == "linux" or platform == "linux2":
+        dataset_root = pathlib.Path(configs['data']['dataset_root_linux'])
         dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_linux'])
     elif platform == "win32":
+        dataset_root = pathlib.Path(configs['data']['dataset_root_windows'])
         dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_windows'])
-
+    # chkpt_file = pathlib.Path('runs/Sep18_19-15-48_ilmare/checkpoint_0200.pth.tar')
+    # chkpt_file = pathlib.Path('runs/Sep20_09-16-58_ilmare/checkpoint_best_top1.pth')
     labels = configs['data']['labels']
     ascan_per_group = configs['data']['ascan_per_group']
     pre_processing = Dict(configs['data']['pre_processing'])
@@ -301,13 +313,13 @@ def main():
     print("Assigning config values to corresponding args variables...")
     # Dataset
     args.dataset_name = configs['SimCLR']['dataset_name']
-    dataset_root = pathlib.Path(dataset_path).joinpath(
+    args.data = pathlib.Path(dataset_path).joinpath(
         'OCT_lab_data' if args.dataset_name == 'oct' else args.dataset_name)
-    print(f"dataset_root: {dataset_root}")
     image_root = build_image_root(ascan_per_group, pre_processing)
+    print(f"dataset image root: {args.data.joinpath(image_root)}")
     args.labels_dict = {i: lbl for i, lbl in enumerate(labels)}
     args.map_df_paths = {
-        split: dataset_root.joinpath(image_root).joinpath(
+        split: args.data.joinpath(image_root).joinpath(
             f"{split}{'Mini' if use_mini_dataset else ''}_mapping_{ascan_per_group}scans.csv")
         for split in ['train', 'valid', 'test']}
     args.img_channel = configs['SimCLR']['img_channel']
@@ -318,7 +330,7 @@ def main():
     if args.img_reshape is not None:
         args.img_size = args.img_reshape
     else:
-        args.img_size = 512  # img_size_dict[args.dataset_name]
+        args.img_size = 512  # BYOL requires square images, so all images will be reshaped to 512x512
     args.use_iipp = configs['SimCLR']['use_iipp']
     args.num_same_area = configs['SimCLR']['num_same_area']
     args.use_simclr_augmentations = configs['SimCLR']['use_simclr_augmentations']
@@ -328,7 +340,6 @@ def main():
     args.seed = configs['training']['random_seed']
     args.dataset_sample = configs['SimCLR']['dataset_sample']
     args.arch = configs['SimCLR']['arch']
-    args.use_pretrained = configs['SimCLR']['use_pretrained']
     args.workers = configs['SimCLR']['num_workers']
     args.epochs = configs['SimCLR']['max_epochs']
     args.batch_size = configs['SimCLR']['batch_size']
@@ -342,9 +353,8 @@ def main():
     args.n_views = 2
     args.gpu_index = configs['SimCLR']['gpu_index']
     args.patience = configs['SimCLR']['patience']
-    save_folder = pathlib.Path().resolve().joinpath(f'weights_{args.arch}')
-    if not save_folder.is_dir():
-        save_folder.mkdir(parents=True)
+    args.save_folder = pathlib.Path().resolve().joinpath(f'weights_{args.arch}')
+    chkpt_file = list(args.save_folder.rglob('checkpoint_best*.pt'))[0]
 
     args.wandb = Dict()
     args.wandb.wandb_log = configs['wandb']['wandb_log']
@@ -363,31 +373,15 @@ def main():
 
     # Create train and test sets
     if args.dataset_name == 'oct':
-        img_transforms = [transforms.ToTensor(),  # scales pixel values to [0, 1]
-                          transforms.Resize((args.img_reshape, args.img_reshape)),
-                          transforms.Normalize(mean=mean[args.dataset_name],
-                                               std=std[args.dataset_name])]
-        if args.img_channel == 1:
-            img_transforms.append(transforms.Grayscale())
-        oct_args = {'map_df_paths': args.map_df_paths,
-                    'labels_dict': args.labels_dict,
-                    'img_size': args.img_size,
-                    'img_channel': args.img_channel,
-                    'sample_within_image': args.sample_within_image,
-                    'use_iipp': args.use_iipp,
-                    'num_same_area': args.num_same_area,
-                    'use_simclr_augmentations': args.use_simclr_augmentations,
-                    'transforms_list': img_transforms,
-                    'dataset_sample': args.dataset_sample}
-        train_loader, test_loader = get_oct_data_loaders(dataset_root, oct_args, args.batch_size, shuffle=False)
+        train_loader, test_loader = get_oct_data_loaders(args.data, args, args.batch_size, shuffle=False)
 
     else:
-        train_loader, test_loader = get_stl10_data_loaders(dataset_root, args.batch_size, shuffle=False, download=False)
+        train_loader, test_loader = get_stl10_data_loaders(args.data, args.batch_size, shuffle=False, download=False)
 
     # Extract features
     print(f"Extracting features on the train and test sets...")
-    resnet_feature_extractor = FeatureExtractor(args, chkpt_file)
-    X_train_feature, y_train, X_test_feature, y_test = resnet_feature_extractor.get_resnet_features(train_loader, test_loader)
+    feature_extractor = FeatureExtractor(args, chkpt_file)
+    X_train_feature, y_train, X_test_feature, y_test = feature_extractor.get_resnet_features(train_loader, test_loader)
 
     # Train logistic regression
     print(f"Training the regression model...")

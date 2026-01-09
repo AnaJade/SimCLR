@@ -30,6 +30,11 @@ class SimCLR(object):
         self.optimizer = kwargs['optimizer']
         self.scheduler = kwargs['scheduler']
         self.writer = SummaryWriter()
+        try:
+            self.writer.all_writers = {self.args.save_folder if k == self.writer.log_dir else k: v for k, v in self.writer.all_writers.items()}
+            self.writer.log_dir = self.args.save_folder
+        except AttributeError:
+            pass
         logging.basicConfig(filename=os.path.join(self.writer.log_dir, 'training.log'), level=logging.DEBUG)
         self.criterion = torch.nn.CrossEntropyLoss().to(self.args.device)
         self.loss = ContrastiveLoss(self.args.batch_size, self.args.temperature,

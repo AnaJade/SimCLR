@@ -6,7 +6,6 @@ import sys
 from sys import platform
 import torch
 import torch.backends.cudnn as cudnn
-from torch import nn
 from addict import Dict
 from torchvision import models
 import torchvision.transforms as transforms
@@ -82,10 +81,14 @@ def main():
     print("Assigning config values to corresponding args variables...")
     # Dataset
     args.dataset_name = configs['SimCLR']['dataset_name']
+    args.scan_no_noise = configs['data']['pre_processing']['no_noise']  # Add to args for logging
+    args.scan_use_movmean = configs['data']['pre_processing']['use_movmean']  # Add to args for logging
+    args.scan_use_speckle = configs['data']['pre_processing']['use_speckle']  # Add to args for logging
+    args.scan_sampling = configs['data']['pre_processing']['ascan_sampling']  # Add to args for logging
     dataset_root = pathlib.Path(dataset_path).joinpath(
         'OCT_lab_data' if args.dataset_name == 'oct' else args.dataset_name)
-    print(f"dataset_root: {dataset_root}")
     image_root = build_image_root(ascan_per_group, pre_processing)
+    print(f"dataset image root: {dataset_root.joinpath(image_root)}")
     args.labels_dict = {i: lbl for i, lbl in enumerate(labels)}
     args.map_df_paths = {
         split: dataset_root.joinpath(image_root).joinpath(
@@ -123,15 +126,15 @@ def main():
     args.n_views = 2
     args.gpu_index = configs['SimCLR']['gpu_index']
     args.patience = configs['SimCLR']['patience']
-    save_folder = pathlib.Path().resolve().joinpath(f'weights_{args.arch}')
-    if not save_folder.is_dir():
-        save_folder.mkdir(parents=True)
+    args.save_folder = pathlib.Path().resolve().joinpath(f'weights_{args.arch}')
+    if not args.save_folder.is_dir():
+        args.save_folder.mkdir(parents=True)
 
     args.wandb = Dict()
     args.wandb.wandb_log = configs['wandb']['wandb_log']
     args.wandb.project_name = configs['wandb']['project_name']
     if args.wandb.project_name != 'Test-project':
-        args.wandb.project_name = 'SimCLR'
+        args.wandb.project_name = 'OCT_SimCLR'
 
     ###############################################
     assert args.n_views == 2, "Only two view training is supported. Please use --n-views 2."
@@ -171,6 +174,8 @@ def main():
                           transforms.Resize((args.img_reshape, args.img_reshape)),
                           transforms.Normalize(mean=mean[args.dataset_name],
                                                std=std[args.dataset_name])]
+        if (args.sample_within_image <= 0) and (args.img_reshape <= 480):
+            img_transforms.insert(1, transforms.CenterCrop(480))
         if args.img_channel == 1:
             img_transforms.append(transforms.Grayscale())
         if not args.use_simclr_augmentations:
