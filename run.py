@@ -2,6 +2,7 @@ import argparse
 import pathlib
 import pynvml
 import random
+import socket
 import sys
 from sys import platform
 import torch
@@ -65,7 +66,10 @@ def main():
 
     configs = utils.load_configs(config_file)
     if platform == "linux" or platform == "linux2":
-        dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_linux'])
+        if 'hpc' in socket.gethostname():
+            dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_hpc'])
+        else:
+            dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_linux'])
     elif platform == "win32":
         dataset_path = pathlib.Path(configs['SimCLR']['dataset_path_windows'])
     labels = configs['data']['labels']
