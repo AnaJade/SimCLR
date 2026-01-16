@@ -7,7 +7,7 @@ from data_aug.view_generator import ContrastiveLearningViewGenerator
 from exceptions.exceptions import InvalidDatasetSelection
 
 # Import utils
-parent_dir = pathlib.Path(__file__).resolve().parent.parent.parent
+parent_dir = pathlib.Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 import utils
 from utils_data import OCTDataset

@@ -8,7 +8,7 @@ import torchvision.models as models
 from exceptions.exceptions import InvalidBackboneError
 
 # Import utils
-parent_dir = pathlib.Path(__file__).resolve().parent.parent.parent
+parent_dir = pathlib.Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 import utils
 

@@ -29,7 +29,7 @@ from models.resnet_simclr import FeatureModelSimCLR
 from simclr import SimCLR
 
 # Import utils
-parent_dir = pathlib.Path(__file__).resolve().parent.parent.parent
+parent_dir = pathlib.Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 import utils
 from utils_data import OCTDataset, build_image_root

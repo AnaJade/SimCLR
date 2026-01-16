@@ -15,7 +15,7 @@ from tqdm import tqdm
 from utils_SimCLR import save_config_file, accuracy, save_checkpoint
 
 # Import utils
-parent_dir = pathlib.Path(__file__).resolve().parent.parent.parent
+parent_dir = pathlib.Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 import utils
 
@@ -76,10 +76,6 @@ class SimCLR(object):
 
         logits = logits / self.args.temperature # shape: [2b, 2b-1]
         return logits, labels
-
-    @staticmethod
-    def get_labels_from_metadata(meta_data):
-        pass
 
     def train(self, train_loader):
         scaler = GradScaler(self.args.device, enabled=self.args.fp16_precision)
