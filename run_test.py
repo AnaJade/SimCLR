@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torchvision import datasets
 import torch.nn as nn
+import torch.nn.functional as F
 from sklearn.metrics import precision_score, recall_score, adjusted_rand_score, normalized_mutual_info_score
 
 from data_aug.contrastive_learning_dataset import ContrastiveLearningDataset
@@ -72,10 +73,12 @@ class FeatureExtractor(object):
     def __init__(self, args, ckp_file):
         self.ckp_file = ckp_file
         self.args = args
+
+        # Define model
         self.model = FeatureModelSimCLR(arch=args.arch, out_dim=args.out_dim, pretrained=False, img_channel=args.img_channel)
-        # FeatureModelSimCLR(base_model=args.arch, out_dim=args.out_dim)
 
         # Load weights
+        print(f"Loading weights from {self.ckp_file}...")
         state_dict = torch.load(self.ckp_file, map_location=self.args.device)
         if 'state_dict' in state_dict.keys():
             state_dict = state_dict['state_dict']
@@ -149,7 +152,9 @@ class LogiticRegressionEvaluator(object):
                 batch_x, batch_y = batch_x.to(self.args.device), batch_y.to(self.args.device)
                 logits = self.log_regression(batch_x)
 
-                predicted = torch.argmax(logits, dim=1)
+                test_probs = F.softmax(logits, dim=1)
+                predicted = torch.argmax(test_probs, dim=1)
+                batch_y = torch.argmax(batch_y, dim=1)
                 total += batch_y.size(0)
                 correct += (predicted == batch_y).sum().item()
 
@@ -180,8 +185,9 @@ class LogiticRegressionEvaluator(object):
 
         weight_decay = self._sample_weight_decay()
 
-        optimizer = torch.optim.Adam(self.log_regression.parameters(), 3e-4, weight_decay=weight_decay)
-        criterion = torch.nn.CrossEntropyLoss()
+        # optimizer = torch.optim.Adam(self.log_regression.parameters(), 3e-4, weight_decay=weight_decay)
+        optimizer = torch.optim.AdamW(self.log_regression.parameters(), lr=self.args.lr, weight_decay=weight_decay)
+        criterion = torch.nn.BCEWithLogitsLoss()
 
         best_nmi = 0
         best_epoch_acc = 0
@@ -195,14 +201,15 @@ class LogiticRegressionEvaluator(object):
                 batch_x, batch_y = batch_x.to(self.args.device), batch_y.to(self.args.device)
                 optimizer.zero_grad()
                 logits = self.log_regression(batch_x)
-                loss = criterion(logits, batch_y)
+                loss = criterion(logits.type(torch.float32), batch_y.type(torch.float32))
                 loss.backward()
                 optimizer.step()
 
             acc, logits_epoch, y_true_epoch = self.eval(test_loader)
 
             # Get other metrics
-            preds_epoch = logits_epoch.argmax(1)
+            test_probs = F.softmax(logits_epoch, dim=1)
+            preds_epoch = test_probs.argmax(1)
             eval_df_epoch = pd.DataFrame(torch.vstack((y_true_epoch.cpu(), preds_epoch.cpu())).T, columns=['label', 'pred'])
             # Calculate other metrics
             # Precision and recall
@@ -231,6 +238,7 @@ class LogiticRegressionEvaluator(object):
         print(f"Precision @ epoch {best_epoch}: {best_epoch_precision}")
         print(f"Recall @ epoch {best_epoch}: {best_epoch_recall}")
         print(f"ARI @ epoch {best_epoch}: {best_epoch_ari}")
+
 
 def get_stl10_data_loaders(root_path, batch_size=128, shuffle=False, download=False):
     train_dataset = datasets.STL10(root_path, split='train', download=download,
