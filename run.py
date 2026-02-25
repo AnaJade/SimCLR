@@ -132,9 +132,9 @@ def main():
     args.patience = configs['SimCLR']['patience']
     if (platform == "linux" or platform == "linux2") and ('hpc' in socket.gethostname() or 'u00' in socket.gethostname()):
         print(f"socket name: {socket.gethostname()}")
-        save_folder = pathlib.Path(r'/fibus/fs0/14/cab8351/OCT_classification/SimCLR').joinpath(f'weights_{args.arch}')
+        args.save_folder = pathlib.Path(r'/fibus/fs0/14/cab8351/OCT_classification/SimCLR').joinpath(f'weights_{args.arch}')
     else:
-        save_folder = pathlib.Path().resolve().joinpath(f'weights_{args.arch}')
+        args.save_folder = pathlib.Path().resolve().joinpath(f'weights_{args.arch}')
     if not args.save_folder.is_dir():
         args.save_folder.mkdir(parents=True)
 

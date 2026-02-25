@@ -119,6 +119,7 @@ class LogisticRegression(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+
 class LogiticRegressionEvaluator(object):
     def __init__(self, n_features, n_classes, args):
         self.args = args

@@ -83,6 +83,8 @@ class FeatureModelSimCLR(nn.Module):
             feature_model = models.vit_b_16(weights=weights)
         elif model_name == 'efficientnetV2s':
             feature_model = models.efficientnet_v2_s(weights=weights)
+        elif model_name == 'efficientnetb3':
+            feature_model = models.efficientnet_b3(weights=weights)
         elif model_name == 'swinv2t':
             feature_model = models.swin_v2_t(weights=weights)
         elif model_name == 'convnextt':
