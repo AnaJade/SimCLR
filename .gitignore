@@ -9,5 +9,6 @@ runs
 wandb
 weights*
 __pycache__
+finetune_SimCLR.py
 nvidia-bug-report.log.gz
 nvidia-debugdump-temp2119908.log
