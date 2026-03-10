@@ -223,7 +223,7 @@ def main():
                                        pretrained=args.use_pretrained,
                                        img_channel=args.img_channel)
 
-    optimizer = torch.optim.Adam(feature_model.parameters(), args.lr, weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(feature_model.parameters(), args.lr, weight_decay=args.weight_decay)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader), eta_min=0,
                                                            last_epoch=-1)
