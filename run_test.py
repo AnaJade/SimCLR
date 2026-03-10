@@ -23,7 +23,7 @@ import torchvision.transforms as transforms
 from torchvision import datasets
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import precision_score, recall_score, adjusted_rand_score, normalized_mutual_info_score
+from sklearn.metrics import classification_report, precision_score, recall_score, adjusted_rand_score, normalized_mutual_info_score
 
 from data_aug.contrastive_learning_dataset import ContrastiveLearningDataset
 from models.resnet_simclr import FeatureModelSimCLR
@@ -196,6 +196,7 @@ class LogiticRegressionEvaluator(object):
         best_epoch_recall = 0
         best_epoch_ari = 0
         best_epoch = 0
+        best_report = None
         print("Training regression model...")
         for e in tqdm(range(200)):
             for batch_x, batch_y in train_loader:
@@ -230,15 +231,18 @@ class LogiticRegressionEvaluator(object):
                 best_epoch_precision = precision
                 best_epoch_recall = recall
                 best_epoch_ari = ari
+                best_report = classification_report(eval_df_epoch['label'], eval_df_epoch['pred'], target_names=self.args.labels_dict.values())
                 torch.save(self.log_regression.state_dict(), 'log_regression.pth')
 
         print("--------------")
         print("Done training")
         print(f"Best nmi @ epoch {best_epoch}: {best_nmi}")
-        print(f"Accuracy @ epoch {best_epoch}: {best_epoch_acc}")
-        print(f"Precision @ epoch {best_epoch}: {best_epoch_precision}")
-        print(f"Recall @ epoch {best_epoch}: {best_epoch_recall}")
+        # print(f"Accuracy @ epoch {best_epoch}: {best_epoch_acc}")
+        # print(f"Precision @ epoch {best_epoch}: {best_epoch_precision}")
+        # print(f"Recall @ epoch {best_epoch}: {best_epoch_recall}")
         print(f"ARI @ epoch {best_epoch}: {best_epoch_ari}")
+        print(f"Classification report @ epoch {best_epoch}")
+        print(best_report)
 
 
 def get_stl10_data_loaders(root_path, batch_size=128, shuffle=False, download=False):
@@ -276,7 +280,7 @@ def get_oct_data_loaders(root_path:pathlib.Path, args: argparse.Namespace, batch
     train_loader = DataLoader(train_dataset, batch_size=batch_size,
                               num_workers=0, drop_last=False, shuffle=shuffle)
 
-    test_dataset = OCTDataset(root_path, 'test',
+    test_dataset = OCTDataset(root_path, 'test_supervised',
                               args.map_df_paths, args.labels_dict,
                               ch_in=args.img_channel,
                               sample_within_image=args.sample_within_image,
