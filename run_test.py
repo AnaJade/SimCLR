@@ -156,7 +156,7 @@ def main():
     # Train logistic regression
     print(f"Training the regression model...")
     log_regressor_evaluator = LogisticRegressionEvaluator(n_features=X_train_feature.shape[1], n_classes=args.out_dim, args=args)
-    log_regressor_evaluator.train(X_train_feature, y_train, X_test_feature, y_test)
+    log_regressor_evaluator.train(X_train_feature, y_train, X_test_feature, y_test, chkpt_file.parent)
 
 
 if __name__ == "__main__":
