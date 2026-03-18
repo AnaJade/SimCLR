@@ -99,7 +99,7 @@ def main():
     new_lbl_str = 'newLbls_' if overwrite_labels is not None else ''
     traj_str = f"{''.join([t.capitalize() for t in trajectories])}_" if len(trajectories) < 3 else ''
     args.map_df_paths = {
-        split: args.data.joinpath(image_root).joinpath(
+        split: dataset_root.joinpath(image_root).joinpath(
             f"{split}{'Mini' if use_mini_dataset else ''}_mapping_{new_lbl_str}{traj_str}{ascan_per_group}scans.csv")
         for split in ['train', 'valid', 'test']}
     args.img_channel = configs['SimCLR']['img_channel']
