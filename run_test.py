@@ -5,6 +5,7 @@ from sys import platform
 import torch
 import torch.backends.cudnn as cudnn
 from addict import Dict
+import pandas as pd
 from torchvision import models
 
 # Import utils
@@ -106,6 +107,10 @@ def main():
     args.num_same_area = configs['SimCLR']['num_same_area']
     args.use_simclr_augmentations = configs['SimCLR']['use_simclr_augmentations']
     args.ascan_per_group = ascan_per_group
+    if overwrite_labels is not None:
+        labels = pd.read_csv(args.map_df_paths['train'])['label'].unique().tolist()
+        args.labels_dict = {i: lbl for i, lbl in enumerate(labels)}
+        num_cluster_dict['oct'] = len(labels)
 
     # Training params
     args.seed = configs['training']['random_seed']
