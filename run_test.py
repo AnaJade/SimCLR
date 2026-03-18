@@ -68,7 +68,9 @@ def main():
     # chkpt_file = pathlib.Path('runs/Sep18_19-15-48_ilmare/checkpoint_0200.pth.tar')
     # chkpt_file = pathlib.Path('runs/Sep20_09-16-58_ilmare/checkpoint_best_top1.pth')
     labels = configs['data']['labels']
+    trajectories = configs['data']['trajectories']
     ascan_per_group = configs['data']['ascan_per_group']
+    overwrite_labels = configs['data']['overwrite_labels']
     pre_processing = Dict(configs['data']['pre_processing'])
     use_mini_dataset = configs['data']['use_mini_dataset']
     mean['oct'] = 3 * [configs['data']['img_mean'] / 255]
@@ -85,9 +87,11 @@ def main():
     image_root = build_image_root(ascan_per_group, pre_processing)
     print(f"dataset image root: {args.data.joinpath(image_root)}")
     args.labels_dict = {i: lbl for i, lbl in enumerate(labels)}
+    new_lbl_str = 'newLbls_' if overwrite_labels is not None else ''
+    traj_str = f"{''.join([t.capitalize() for t in trajectories])}_" if len(trajectories) < 3 else ''
     args.map_df_paths = {
         split: args.data.joinpath(image_root).joinpath(
-            f"{split}{'Mini' if use_mini_dataset else ''}_mapping_{ascan_per_group}scans.csv")
+            f"{split}{'Mini' if use_mini_dataset else ''}_mapping_{new_lbl_str}{traj_str}{ascan_per_group}scans.csv")
         for split in ['train', 'valid', 'test']}
     args.img_channel = configs['SimCLR']['img_channel']
     if args.dataset_name != 'oct':
