@@ -76,7 +76,7 @@ def main():
     labels = configs['data']['labels']
     trajectories = configs['data']['trajectories']
     ascan_per_group = configs['data']['ascan_per_group']
-    overwrite_labels = configs['data']['overwrite_labels']
+    overwrite_labels_path = pathlib.Path(configs['data']['overwrite_labels'])
     pre_processing = Dict(configs['data']['pre_processing'])
     use_mini_dataset = configs['data']['use_mini_dataset']
     mean['oct'] = 3 * [configs['data']['img_mean'] / 255]
@@ -97,7 +97,7 @@ def main():
     image_root = build_image_root(ascan_per_group, pre_processing)
     print(f"dataset image root: {dataset_root.joinpath(image_root)}")
     args.labels_dict = {i: lbl for i, lbl in enumerate(labels)}
-    new_lbl_str = 'newLbls_' if overwrite_labels is not None else ''
+    new_lbl_str = f'{overwrite_labels_path.stem}_' if overwrite_labels_path is not None else ''
     traj_str = f"{''.join([t.capitalize() for t in trajectories])}_" if len(trajectories) < 3 else ''
     args.map_df_paths = {
         split: dataset_root.joinpath(image_root).joinpath(
@@ -116,7 +116,7 @@ def main():
     args.num_same_area = configs['SimCLR']['num_same_area']
     args.use_simclr_augmentations = configs['SimCLR']['use_simclr_augmentations']
     args.ascan_per_group = ascan_per_group
-    if overwrite_labels is not None:
+    if overwrite_labels_path is not None:
         labels = pd.read_csv(args.map_df_paths['train'])['label'].unique().tolist()
         args.labels_dict = {i: lbl for i, lbl in enumerate(labels)}
         num_cluster_dict['oct'] = len(labels)
