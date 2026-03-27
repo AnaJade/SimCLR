@@ -7,12 +7,14 @@ import torch.backends.cudnn as cudnn
 from addict import Dict
 import pandas as pd
 from torchvision import models
+import torchvision.transforms as transforms
+from torchvision.transforms import v2, InterpolationMode
 
 # Import utils
 parent_dir = pathlib.Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 import utils
-from utils_data import get_supervised_oct_data_loaders, get_stl10_data_loaders, build_image_root
+from utils_data import get_supervised_oct_data_loaders, get_stl10_data_loaders, build_image_root, RandomWrapAround
 from ssl_test import FeatureExtractor, LogisticRegressionEvaluator
 
 # Img size and moco_dim (nb of classes) values based on the dataset
@@ -104,6 +106,7 @@ def main():
     else:
         args.img_size = 512  # BYOL requires square images, so all images will be reshaped to 512x512
     args.use_iipp = configs['SimCLR']['use_iipp']
+    args.ratio_sup = configs['SimCLR']['test_ratio_sup']
     args.num_same_area = configs['SimCLR']['num_same_area']
     args.use_simclr_augmentations = configs['SimCLR']['use_simclr_augmentations']
     args.ascan_per_group = ascan_per_group
@@ -149,11 +152,27 @@ def main():
 
     # Create train and test sets
     if args.dataset_name == 'oct':
+        train_aug = [
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomEqualize(p=0.5),
+            RandomWrapAround(dim=-1, p=1.0),
+            RandomWrapAround(dim=-2, p=1.0)
+        ]
+        test_aug = [
+            transforms.RandomEqualize(p=0.0),
+        ]
+        if args.dataset_name == 'oct_clinical':
+            train_aug = train_aug + [
+                transforms.RandomApply([transforms.ColorJitter(brightness=0.2, contrast=0.2)], p=0.8), ]
         train_loader, valid_loader, test_loader = get_supervised_oct_data_loaders(args.data, args, args.batch_size,
+                                                                                  train_aug=train_aug,
+                                                                                  test_aug=test_aug,
                                                                                   mean=mean[args.dataset_name],
                                                                                   std=std[args.dataset_name],
-                                                                                  shuffle=False)
-
+                                                                                  ratio_sup=args.ratio_sup,
+                                                                                  shuffle=True,
+                                                                                  seq_split=False)
     else:
         train_loader, test_loader = get_stl10_data_loaders(args.data, args.batch_size, shuffle=False, download=False)
 

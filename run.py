@@ -11,6 +11,7 @@ from addict import Dict
 import pandas as pd
 from torchvision import models
 import torchvision.transforms as transforms
+from torchvision.transforms import v2, InterpolationMode
 
 from data_aug.contrastive_learning_dataset import ContrastiveLearningDataset
 from models.resnet_simclr import FeatureModelSimCLR
@@ -20,7 +21,7 @@ from simclr import SimCLR
 parent_dir = pathlib.Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 import utils
-from utils_data import OCTDataset, build_image_root
+from utils_data import OCTDataset, build_image_root, get_oct_data_loaders, NormTransform, RandomWrapAround
 
 # Img size and moco_dim (nb of classes) values based on the dataset
 img_size_dict = {'stl10': 96,
@@ -187,22 +188,27 @@ def main():
         args.gpu_index = -1
 
     if args.dataset_name == 'oct':
-        img_transforms = [transforms.ToTensor(),  # scales pixel values to [0, 1]
-                          transforms.Resize((args.img_reshape, args.img_reshape)),
-                          transforms.Normalize(mean=mean[args.dataset_name],
-                                               std=std[args.dataset_name])]
+        img_transforms = [v2.ToTensor(),  # scales pixel values to [0, 1]
+                          v2.Resize((args.img_reshape, args.img_reshape), interpolation=InterpolationMode.BILINEAR),
+                          NormTransform()]
         if (args.sample_within_image <= 0) and (args.img_reshape <= 480):
             img_transforms.insert(1, transforms.CenterCrop(480))
         if args.img_channel == 1:
             img_transforms.append(transforms.Grayscale())
         if not args.use_simclr_augmentations:
-            aug = [transforms.RandomApply([transforms.RandomVerticalFlip()], p=0.3),  # Used to counter flipped scans
-                   transforms.RandomApply([transforms.ColorJitter(brightness=0.2, contrast=0.2)], p=0.8),
-                   transforms.RandomApply([transforms.RandomRotation(degrees=8),
-                                           # transforms.CenterCrop(size=(188, 236)), # Used in the paper, but not really applicable here
-                                           transforms.RandomHorizontalFlip()], p=0.5),
-                   ]
-            img_transforms = img_transforms + aug
+            # aug = [transforms.RandomApply([transforms.RandomVerticalFlip()], p=0.3),  # Used to counter flipped scans
+            #        transforms.RandomApply([transforms.ColorJitter(brightness=0.2, contrast=0.2)], p=0.8),
+            #        transforms.RandomApply([transforms.RandomRotation(degrees=8),
+            #                                # transforms.CenterCrop(size=(188, 236)), # Used in the paper, but not really applicable here
+            #                                transforms.RandomHorizontalFlip()], p=0.5),
+            #        ]
+            aug = [
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomVerticalFlip(p=0.5),
+                RandomWrapAround(dim=-1, p=1.0),
+                RandomWrapAround(dim=-2, p=1.0)
+            ]
+            img_transforms = [transforms.RandomEqualize(p=0.5),] + img_transforms + aug
         oct_args = {'map_df_paths': args.map_df_paths,
                     'labels_dict': args.labels_dict,
                     'img_size': args.img_size,

@@ -95,7 +95,7 @@ class SimCLR(object):
         for epoch_counter in range(self.args.epochs):
             print(f"================================\n"
                   f"Epoch {epoch_counter}")
-            if (epoch_counter - best_epoch) >= self.args.patience:
+            if (epoch_counter - best_epoch) >= self.args.patience+1:
                 print(f'Loss has not improved for {self.args.patience} epochs. Training has stopped')
                 print(f'Best loss was {best_loss} @ epoch {best_epoch}')
                 break
@@ -138,7 +138,6 @@ class SimCLR(object):
                     meta_data = meta_data.repeat(self.args.num_same_area) # meta data for one transform
                 images = torch.cat(images, dim=0) # shape: [2b, c, h, w], shape iipp: [2b, c, h, w]
                 images = images.to(self.args.device)
-
 
                 with autocast(device_type=str(self.args.device), enabled=self.args.fp16_precision):
                     features = self.model(images) # shape:[2b, nb_class]
@@ -188,6 +187,8 @@ class SimCLR(object):
             if self.args.wandb.wandb_log:
                 utils.wandb_log('epoch',
                                 loss=avg_epoch_loss,
+                                best=best_epoch,
+                                best_loss=best_loss,
                                 # acc_top1=top1,
                                 # acc_top5=top5,
                                 lr=self.scheduler.get_last_lr()[0])
