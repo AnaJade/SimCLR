@@ -165,7 +165,7 @@ class SimCLR(object):
                         self.writer.add_scalar('loss', loss, global_step=n_iter)
                         # self.writer.add_scalar('acc/top1', top1[0], global_step=n_iter)
                         # self.writer.add_scalar('acc/top5', top5[0], global_step=n_iter)
-                        self.writer.add_scalar('learning_rate', self.scheduler.get_lr()[0], global_step=n_iter)
+                        self.writer.add_scalar('learning_rate', self.scheduler.get_last_lr()[0], global_step=n_iter)
 
                 n_iter += 1
                 avg_epoch_loss.append(loss)
