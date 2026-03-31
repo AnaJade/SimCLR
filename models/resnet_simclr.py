@@ -43,6 +43,13 @@ class FeatureModelSimCLR(nn.Module):
             self.backbone.fc = nn.Sequential(nn.Linear(dim_mlp, dim_mlp),
                                              nn.ReLU(),
                                              nn.Linear(dim_mlp, out_dim))
+        if 'mobilenetv3' in arch:
+            dim_mlp = self.backbone.classifier[3].in_features
+            self.backbone.classifier = nn.Sequential(
+                *list(self.backbone.classifier)[:-1],
+                nn.Linear(dim_mlp, dim_mlp),
+                nn.ReLU(),
+                nn.Linear(dim_mlp, out_dim))
         if 'vit' in arch:
             dim_mlp = self.backbone.heads.head.in_features
             self.backbone.heads.head = nn.Sequential(nn.Linear(dim_mlp, dim_mlp),
@@ -77,6 +84,8 @@ class FeatureModelSimCLR(nn.Module):
         weights = 'DEFAULT' if self.pretrained else None
         if model_name == 'resnet18':
             feature_model = models.resnet18(weights=weights)
+        elif model_name == 'mobilenetv3':
+            feature_model = models.mobilenet_v3_small(weights=weights)
         elif model_name == 'resnet50':
             feature_model = models.resnet50(weights=weights)
         elif model_name == 'vitb16':
