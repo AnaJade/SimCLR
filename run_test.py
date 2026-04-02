@@ -141,11 +141,13 @@ def main():
 
     ###############################################
     assert args.n_views == 2, "Only two view training is supported. Please use --n-views 2."
+    # Set all random seeds
+    print("Setting random seed...")
+    utils.set_random_seed(args.seed)
+
     # check if gpu training is available
     if not args.disable_cuda and torch.cuda.is_available():
         args.device = torch.device('cuda')
-        cudnn.deterministic = True
-        cudnn.benchmark = True
     else:
         args.device = torch.device('cpu')
         args.gpu_index = -1

@@ -6,7 +6,6 @@ import socket
 import sys
 from sys import platform
 import torch
-import torch.backends.cudnn as cudnn
 from addict import Dict
 import pandas as pd
 from torchvision import models
@@ -158,16 +157,13 @@ def main():
     assert args.n_views == 2, "Only two view training is supported. Please use --n-views 2."
     # Set all random seeds
     print("Setting random seed...")
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    utils.set_random_seed(args.seed)
 
     # check if gpu training is available
     if not args.disable_cuda and torch.cuda.is_available():
         # print('__CUDNN VERSION:', torch.backends.cudnn.version())
         # print('__Number CUDA Devices:', torch.cuda.device_count())
         args.device = torch.device(f'cuda:{args.gpu_index}')
-        cudnn.deterministic = True
-        cudnn.benchmark = True
         print('Selected GPU index:', args.gpu_index)
         print('__CUDA Device Name:', torch.cuda.get_device_name(args.gpu_index))
         print('__CUDA Device Total Memory [GB]:', torch.cuda.get_device_properties(args.gpu_index).total_memory / 1e9)
